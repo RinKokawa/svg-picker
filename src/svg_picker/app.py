@@ -1,6 +1,7 @@
 """SVG Picker — 通过关键词搜索并选择 SVG 图标（PySide6 原生窗口）"""
 
 import argparse
+import os
 import re
 import sys
 import threading
@@ -75,6 +76,24 @@ TEXT_DISABLED = THEMES["cream"]["TEXT_DISABLED"]
 ACCENT        = THEMES["cream"]["ACCENT"]
 ACCENT_HOVER  = THEMES["cream"]["ACCENT_HOVER"]
 ACCENT_SEL_BG = THEMES["cream"]["ACCENT_SEL_BG"]
+
+
+def load_dotenv(path=".env"):
+    """轻量 .env 读取。返回 dict;文件不存在返回空 dict。
+    支持空行、`#` 注释、KEY=VALUE、以及值两侧的单/双引号。"""
+    env = {}
+    if not os.path.isfile(path):
+        return env
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            env[k.strip()] = v.strip().strip('"').strip("'")
+    return env
 
 
 def apply_theme(name):
@@ -546,11 +565,25 @@ def main():
         description="搜索 Iconify 图标,GUI 视觉选择,SVG 输出到 stdout。",
     )
     parser.add_argument("keyword", help="搜索关键词")
+
+    # 默认主题优先级:命令行 > ./env 中的 SVG_PICKER_THEME > cream
+    dotenv = load_dotenv()
+    env_theme = dotenv.get("SVG_PICKER_THEME")
+    if env_theme and env_theme not in THEMES:
+        print(
+            f"[svg-picker] warning: SVG_PICKER_THEME={env_theme!r} "
+            f"in .env not in {list(THEMES)}, falling back to 'cream'",
+            file=sys.stderr,
+        )
+        env_theme = None
+    default_theme = env_theme or "cream"
+
     parser.add_argument(
         "--theme", "-t",
         choices=list(THEMES.keys()),
-        default="cream",
-        help="背景主题(默认: %(default)s)。可选: " + ", ".join(THEMES),
+        default=default_theme,
+        help="背景主题。可选: " + ", ".join(THEMES)
+             + f" (默认: %(default)s,亦可在 .env 中设 SVG_PICKER_THEME)",
     )
     args = parser.parse_args()
 

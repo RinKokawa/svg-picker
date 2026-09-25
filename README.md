@@ -105,6 +105,21 @@ svg-picker home --theme sky      # sky blue background
 svg-picker arrow -t dark         # dark theme, short flag
 ```
 
+### Default theme via `.env`
+
+To set a project-wide default without typing `--theme` every time, drop a `.env` file in the directory you run `svg-picker` from:
+
+```bash
+cp .env.example .env       # then edit .env
+```
+
+```ini
+# .env
+SVG_PICKER_THEME=sky
+```
+
+Resolution order: **CLI `--theme` → `.env` `SVG_PICKER_THEME` → `cream`**. An invalid value in `.env` prints a warning to stderr and falls back to the built-in default.
+
 ### Steps
 
 1. Window opens with the first page of 10 matching icons

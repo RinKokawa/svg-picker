@@ -105,6 +105,21 @@ svg-picker home --theme sky      # 天蓝背景
 svg-picker arrow -t dark         # 深色主题（短选项）
 ```
 
+### 通过 `.env` 设置默认主题
+
+如果不想每次都敲 `--theme`，可在运行 `svg-picker` 的目录下放一个 `.env` 文件：
+
+```bash
+cp .env.example .env       # 然后编辑 .env
+```
+
+```ini
+# .env
+SVG_PICKER_THEME=sky
+```
+
+优先级：**命令行 `--theme` → `.env` 中的 `SVG_PICKER_THEME` → `cream`**。`.env` 里写了非法值会在 stderr 警告并降级到内置默认。
+
 ### 步骤
 
 1. 窗口打开，显示第一页 10 个匹配图标
