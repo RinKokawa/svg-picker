@@ -242,14 +242,14 @@ class IconCard(QFrame):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, keyword):
+    def __init__(self, keyword, page_size=10):
         super().__init__()
         self.keyword = keyword
         self.selected = set()
         self.icon_cards = {}
 
         # 分页状态
-        self.page_size = 10
+        self.page_size = max(1, page_size)
         self.current_page = 0
         self.total_matches = 0
         self._cache = {}  # page -> {iconify_id: bytes}
@@ -601,14 +601,23 @@ def main():
         help="背景主题。可选: " + ", ".join(THEMES)
              + f" (默认: %(default)s,亦可在 .env 中设 SVG_PICKER_THEME)",
     )
+    parser.add_argument(
+        "--per-page", "-n",
+        type=int,
+        default=10,
+        help="每页显示的图标数(默认: %(default)s)",
+    )
     args = parser.parse_args()
+
+    if args.per_page < 1:
+        parser.error(f"--per-page must be >= 1, got {args.per_page}")
 
     apply_theme(args.theme)
 
     app = QApplication(sys.argv)
     app.setStyle("fusion")
 
-    win = MainWindow(args.keyword)
+    win = MainWindow(args.keyword, page_size=args.per_page)
     win.show()
 
     sys.exit(app.exec())

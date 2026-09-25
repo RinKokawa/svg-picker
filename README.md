@@ -93,7 +93,7 @@ pip install -e .
 ## Usage
 
 ```bash
-svg-picker <keyword> [--theme cream|sky|dark]
+svg-picker <keyword> [--theme cream|sky|dark] [--per-page N]
 ```
 
 ### Options
@@ -101,6 +101,7 @@ svg-picker <keyword> [--theme cream|sky|dark]
 | Flag | Description |
 |---|---|
 | `-t`, `--theme <name>` | Background theme. Choices: `cream` (default), `sky`, `dark` |
+| `-n`, `--per-page <N>` | Icons per page (default: `10`) |
 
 ### Examples
 
@@ -108,6 +109,7 @@ svg-picker <keyword> [--theme cream|sky|dark]
 svg-picker home                  # default cream theme
 svg-picker home --theme sky      # sky blue background
 svg-picker arrow -t dark         # dark theme, short flag
+svg-picker home -n 20            # 20 icons per page
 ```
 
 ### Default theme via `.env`
@@ -142,7 +144,7 @@ Place this file as `~/.claude/skills/svg-picker.md`:
 
 Pick SVG icons via keyword search with human visual selection.
 
-Usage: svg-picker <keyword> [--theme cream|sky|dark]
+Usage: svg-picker <keyword> [--theme cream|sky|dark] [--per-page N]
 
 The human selects icons from the window. SVG source code is output to stdout.
 If the window is closed without confirming, a "[svg-picker] cancelled: ..."
