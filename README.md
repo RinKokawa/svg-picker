@@ -60,9 +60,12 @@ The human acts as a **visual judge** — the AI remains in full control of the w
 
 ## Features
 
-- **Native GUI** — PySide6 dark-themed window, no browser required
+- **Native GUI** — PySide6 window, no browser required
+- **Themable** — `cream` / `sky` / `dark` backgrounds via `--theme`
+- **Pagination** — 10 icons per page, flip with `‹` / `›` buttons or `←` / `→` keys; selections persist across pages
 - **Iconify API** — Access to 150+ icon sets, 500,000+ icons
 - **stdout output** — SVG code flows directly into the AI's context
+- **Cancellation signal** — closing the window writes `[svg-picker] cancelled: ...` to stderr so callers can distinguish user cancel from program crash
 - **One-step install** — pip install, single command
 - **Zero config** — No API keys, no servers, no infrastructure
 
@@ -85,19 +88,30 @@ pip install -e .
 ## Usage
 
 ```bash
-svg-picker <keyword>
+svg-picker <keyword> [--theme cream|sky|dark]
 ```
 
-Example:
+### Options
+
+| Flag | Description |
+|---|---|
+| `-t`, `--theme <name>` | Background theme. Choices: `cream` (default), `sky`, `dark` |
+
+### Examples
 
 ```bash
-svg-picker home
+svg-picker home                  # default cream theme
+svg-picker home --theme sky      # sky blue background
+svg-picker arrow -t dark         # dark theme, short flag
 ```
 
-1. Window opens with matching icons
-2. Click to select one or more
-3. Press **Confirm** — SVG source code is printed to stdout, window closes
-4. The AI agent receives the SVG code and uses it in code
+### Steps
+
+1. Window opens with the first page of 10 matching icons
+2. Click to select one or more; click again to deselect
+3. Flip pages with `‹` / `›` buttons or `←` / `→` keys — selections persist across pages
+4. Press **Confirm** — SVG source code is printed to stdout, window closes
+5. Close the window (X) to cancel — a `[svg-picker] cancelled: ...` line is written to stderr
 
 ---
 
@@ -112,9 +126,11 @@ Place this file as `~/.claude/skills/svg-picker.md`:
 
 Pick SVG icons via keyword search with human visual selection.
 
-Usage: svg-picker <keyword>
+Usage: svg-picker <keyword> [--theme cream|sky|dark]
 
 The human selects icons from the window. SVG source code is output to stdout.
+If the window is closed without confirming, a "[svg-picker] cancelled: ..."
+line is written to stderr — read stderr to distinguish cancel from crash.
 ```
 
 ### Programmatic Usage
@@ -122,9 +138,26 @@ The human selects icons from the window. SVG source code is output to stdout.
 ```python
 import subprocess
 
-result = subprocess.run(["svg-picker", "home"], capture_output=True, text=True)
-svg_code = result.stdout
-# svg_code now contains the raw SVG source
+result = subprocess.run(
+    ["svg-picker", "home"],
+    capture_output=True, text=True,
+)
+
+if result.returncode != 0:
+    # 程序异常退出 —— stderr 会有 Python traceback
+    raise RuntimeError(f"svg-picker crashed: {result.stderr}")
+
+if "[svg-picker] cancelled" in result.stderr:
+    # 用户主动关闭窗口,没点 Confirm
+    if "selected but not confirmed" in result.stderr:
+        # 选了但没用上 —— 尊重取消意图,不要 fallback
+        print("User cancelled with selections discarded")
+    else:
+        print("User cancelled without selection")
+else:
+    # 正常完成 —— result.stdout 是 SVG 源码
+    svg_code = result.stdout
+    # 每段格式:<!-- iconify_id -->\n<svg>...</svg>
 ```
 
 ---

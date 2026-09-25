@@ -60,9 +60,12 @@ svg-picker 将这一原则应用于一个具体、狭窄的任务：**图标选�
 
 ## 功能特点
 
-- **原生 GUI** — PySide6 暗色主题窗口，无需浏览器
+- **原生 GUI** — PySide6 窗口，无需浏览器
+- **可换主题** — `cream` / `sky` / `dark` 三种背景(`--theme` 切换)
+- **分页浏览** — 每页 10 个图标，按 `‹` / `›` 按钮或 `←` / `→` 键翻页；选中状态跨页保留
 - **Iconify API** — 接入 150+ 图标集、50 万+ 图标
 - **stdout 输出** — SVG 代码直接流入 AI 上下文
+- **取消信号** — 关闭窗口时往 stderr 写 `[svg-picker] cancelled: ...`，调用方可区分"用户取消"和"程序崩溃"
 - **一步安装** — pip install，一条命令
 - **零配置** — 无需 API Key、无服务器、无基础设施
 
@@ -85,19 +88,30 @@ pip install -e .
 ## 使用方法
 
 ```bash
-svg-picker <关键词>
+svg-picker <关键词> [--theme cream|sky|dark]
 ```
 
-示例：
+### 选项
+
+| 参数 | 说明 |
+|---|---|
+| `-t`, `--theme <名称>` | 背景主题。可选：`cream`(默认)、`sky`、`dark` |
+
+### 示例
 
 ```bash
-svg-picker home
+svg-picker home                  # 默认 cream 米黄主题
+svg-picker home --theme sky      # 天蓝背景
+svg-picker arrow -t dark         # 深色主题（短选项）
 ```
 
-1. 窗口打开，显示匹配的图标
-2. 点击选中一个或多个
-3. 点击 **Confirm** — SVG 源码打印到 stdout，窗口关闭
-4. AI Agent 收到 SVG 代码并用于代码中
+### 步骤
+
+1. 窗口打开，显示第一页 10 个匹配图标
+2. 点击选中，再次点击取消选择
+3. 按 `‹` / `›` 按钮或 `←` / `→` 键翻页 — 选中状态跨页保留
+4. 点击 **Confirm** — SVG 源码打印到 stdout，窗口关闭
+5. 直接关窗（点 X）= 取消，会在 stderr 打印一行 `[svg-picker] cancelled: ...`
 
 ---
 
@@ -112,9 +126,11 @@ svg-picker home
 
 通过关键词搜索，以人类视觉选择方式获取 SVG 图标。
 
-用法: svg-picker <关键词>
+用法: svg-picker <关键词> [--theme cream|sky|dark]
 
 人类从窗口中选择图标，SVG 源码输出到 stdout。
+若窗口被关闭而未确认，stderr 会输出一行 `[svg-picker] cancelled: ...` —
+读 stderr 可区分取消和崩溃。
 ```
 
 ### 程序化调用
@@ -122,9 +138,26 @@ svg-picker home
 ```python
 import subprocess
 
-result = subprocess.run(["svg-picker", "home"], capture_output=True, text=True)
-svg_code = result.stdout
-# svg_code 包含原始 SVG 源码
+result = subprocess.run(
+    ["svg-picker", "home"],
+    capture_output=True, text=True,
+)
+
+if result.returncode != 0:
+    # 程序异常退出 —— stderr 会有 Python traceback
+    raise RuntimeError(f"svg-picker crashed: {result.stderr}")
+
+if "[svg-picker] cancelled" in result.stderr:
+    # 用户主动关闭窗口，未点 Confirm
+    if "selected but not confirmed" in result.stderr:
+        # 选了但没用上 —— 尊重取消意图，不要 fallback
+        print("User cancelled with selections discarded")
+    else:
+        print("User cancelled without selection")
+else:
+    # 正常完成 —— result.stdout 是 SVG 源码
+    svg_code = result.stdout
+    # 每段格式:<!-- iconify_id -->\n<svg>...</svg>
 ```
 
 ---
