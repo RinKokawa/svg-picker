@@ -107,11 +107,7 @@ svg-picker arrow -t dark         # dark theme, short flag
 
 ### Default theme via `.env`
 
-To set a project-wide default without typing `--theme` every time, drop a `.env` file in the directory you run `svg-picker` from:
-
-```bash
-cp .env.example .env       # then edit .env
-```
+To set a project-wide default without typing `--theme` every time, edit `.env` in the directory you run `svg-picker` from. On first launch, `svg-picker` creates an empty `.env` for you if one doesn't exist — just add a line like:
 
 ```ini
 # .env

@@ -107,11 +107,7 @@ svg-picker arrow -t dark         # 深色主题（短选项）
 
 ### 通过 `.env` 设置默认主题
 
-如果不想每次都敲 `--theme`，可在运行 `svg-picker` 的目录下放一个 `.env` 文件：
-
-```bash
-cp .env.example .env       # 然后编辑 .env
-```
+如果不想每次都敲 `--theme`，编辑运行 `svg-picker` 所在目录下的 `.env` 即可。第一次启动时，程序会自动创建一个空的 `.env`（stderr 会有提示），加上类似这一行：
 
 ```ini
 # .env

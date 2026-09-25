@@ -96,6 +96,19 @@ def load_dotenv(path=".env"):
     return env
 
 
+def ensure_dotenv(path=".env"):
+    """确保 .env 存在 —— 不存在则创建一个空文件,并 stderr 提示用户。
+    让用户后续自行编辑(比如设置 SVG_PICKER_THEME)。"""
+    if os.path.isfile(path):
+        return
+    open(path, "w", encoding="utf-8").close()
+    print(
+        f"[svg-picker] created empty {path} — "
+        f"add e.g. 'SVG_PICKER_THEME=sky' to set a default theme",
+        file=sys.stderr,
+    )
+
+
 def apply_theme(name):
     """根据主题名更新模块级颜色常量,影响后续所有 UI。"""
     if name not in THEMES:
@@ -565,6 +578,9 @@ def main():
         description="搜索 Iconify 图标,GUI 视觉选择,SVG 输出到 stdout。",
     )
     parser.add_argument("keyword", help="搜索关键词")
+
+    # 确保 .env 存在(空文件也 OK,用户后续可编辑)
+    ensure_dotenv()
 
     # 默认主题优先级:命令行 > ./env 中的 SVG_PICKER_THEME > cream
     dotenv = load_dotenv()
