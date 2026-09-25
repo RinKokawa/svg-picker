@@ -1,5 +1,6 @@
 """SVG Picker — 通过关键词搜索并选择 SVG 图标（PySide6 原生窗口）"""
 
+import argparse
 import re
 import sys
 import threading
@@ -14,6 +15,74 @@ from PySide6.QtWidgets import (
 )
 
 ICONIFY_BASE = "https://api.iconify.design"
+
+# 主题字典 — 每套配色覆盖所有 UI 元素
+THEMES = {
+    "cream": {
+        "BG_BASE":       "#f5f0e1",
+        "BG_CARD":       "#fbf6e4",
+        "BG_HOVER":      "#ede2bf",
+        "BG_DISABLED":   "#e6dcc0",
+        "BORDER":        "#d8c79f",
+        "BORDER_HOVER":  "#b9a578",
+        "TEXT_PRIMARY":  "#2c2418",
+        "TEXT_MUTED":    "#8a7a5e",
+        "TEXT_DISABLED": "#a89b78",
+        "ACCENT":        "#6366f1",
+        "ACCENT_HOVER":  "#818cf8",
+        "ACCENT_SEL_BG": "rgba(99,102,241,0.15)",
+    },
+    "sky": {
+        "BG_BASE":       "#e0f2fe",   # sky-100
+        "BG_CARD":       "#f0f9ff",   # sky-50
+        "BG_HOVER":      "#bae6fd",   # sky-200
+        "BG_DISABLED":   "#cbd5e1",   # slate-200
+        "BORDER":        "#7dd3fc",   # sky-300
+        "BORDER_HOVER":  "#38bdf8",   # sky-400
+        "TEXT_PRIMARY":  "#0c4a6e",   # sky-900
+        "TEXT_MUTED":    "#64748b",   # slate-500
+        "TEXT_DISABLED": "#94a3b8",   # slate-400
+        "ACCENT":        "#0284c7",   # sky-600
+        "ACCENT_HOVER":  "#0ea5e9",   # sky-500
+        "ACCENT_SEL_BG": "rgba(2,132,199,0.15)",
+    },
+    "dark": {
+        "BG_BASE":       "#0f1117",
+        "BG_CARD":       "#0f1117",
+        "BG_HOVER":      "#1e2130",
+        "BG_DISABLED":   "#2e3347",
+        "BORDER":        "#2e3347",
+        "BORDER_HOVER":  "#3d4260",
+        "TEXT_PRIMARY":  "#e2e4ea",
+        "TEXT_MUTED":    "#7a7f99",
+        "TEXT_DISABLED": "#5a5f7a",
+        "ACCENT":        "#6366f1",
+        "ACCENT_HOVER":  "#818cf8",
+        "ACCENT_SEL_BG": "rgba(99,102,241,0.2)",
+    },
+}
+
+# 默认主题常量(cream);main() 会通过 apply_theme 覆盖
+BG_BASE       = THEMES["cream"]["BG_BASE"]
+BG_CARD       = THEMES["cream"]["BG_CARD"]
+BG_HOVER      = THEMES["cream"]["BG_HOVER"]
+BG_DISABLED   = THEMES["cream"]["BG_DISABLED"]
+BORDER        = THEMES["cream"]["BORDER"]
+BORDER_HOVER  = THEMES["cream"]["BORDER_HOVER"]
+TEXT_PRIMARY  = THEMES["cream"]["TEXT_PRIMARY"]
+TEXT_MUTED    = THEMES["cream"]["TEXT_MUTED"]
+TEXT_DISABLED = THEMES["cream"]["TEXT_DISABLED"]
+ACCENT        = THEMES["cream"]["ACCENT"]
+ACCENT_HOVER  = THEMES["cream"]["ACCENT_HOVER"]
+ACCENT_SEL_BG = THEMES["cream"]["ACCENT_SEL_BG"]
+
+
+def apply_theme(name):
+    """根据主题名更新模块级颜色常量,影响后续所有 UI。"""
+    if name not in THEMES:
+        raise ValueError(f"Unknown theme '{name}'. Choose from {list(THEMES)}")
+    for key, value in THEMES[name].items():
+        globals()[key] = value
 
 
 def fetch_svg_bytes(iconify_id):
@@ -33,18 +102,28 @@ def fetch_svg_bytes(iconify_id):
 
 
 def svg_bytes_to_pixmap(svg_bytes, size=64, color=None):
-    """SVG 字节 -> QPixmap（指定尺寸），可指定填充颜色"""
+    """SVG 字节 -> QPixmap（指定尺寸），可指定填充颜色。
+    同时处理 fill 和 stroke 的 currentColor/black 替换。"""
     from PySide6.QtSvg import QSvgRenderer
 
-    fill_color = color or "#e2e4ea"
+    fill_color = color or TEXT_PRIMARY
     svg_text = svg_bytes.decode("utf-8", errors="ignore")
 
+    # fill 替换
     svg_text = re.sub(
         r'\bfill="(currentColor|black|#000|#000000)"',
         f'fill="{fill_color}"',
         svg_text,
         flags=re.IGNORECASE
     )
+    # stroke 替换(描线图标也按主题色染)
+    svg_text = re.sub(
+        r'\bstroke="(currentColor|black|#000|#000000)"',
+        f'stroke="{fill_color}"',
+        svg_text,
+        flags=re.IGNORECASE
+    )
+    # 如果 SVG 完全没 fill,默认给一个(避免无色)
     if 'fill=' not in svg_text and '<svg' in svg_text:
         svg_text = svg_text.replace('<svg', f'<svg fill="{fill_color}"', 1)
 
@@ -76,24 +155,24 @@ class IconCard(QFrame):
 
     def _update_style(self):
         if self._selected:
-            self.setStyleSheet("""
-                QFrame {
-                    background: rgba(99,102,241,0.2);
-                    border: 2px solid #6366f1;
+            self.setStyleSheet(f"""
+                QFrame {{
+                    background: {ACCENT_SEL_BG};
+                    border: 2px solid {ACCENT};
                     border-radius: 8px;
-                }
+                }}
             """)
         else:
-            self.setStyleSheet("""
-                QFrame {
-                    background: #0f1117;
+            self.setStyleSheet(f"""
+                QFrame {{
+                    background: {BG_CARD};
                     border: 2px solid transparent;
                     border-radius: 8px;
-                }
-                QFrame:hover {
-                    background: #1e2130;
-                    border: 2px solid #3d4260;
-                }
+                }}
+                QFrame:hover {{
+                    background: {BG_HOVER};
+                    border: 2px solid {BORDER};
+                }}
             """)
 
     def mousePressEvent(self, event):
@@ -118,7 +197,7 @@ class IconCard(QFrame):
             )
             painter.drawPixmap(x, y, scaled)
 
-        painter.setPen(QColor("#7a7f99"))
+        painter.setPen(QColor(TEXT_MUTED))
         font = painter.font()
         font.setPointSize(7)
         painter.setFont(font)
@@ -153,7 +232,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(680, 520)
         self.resize(780, 620)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._apply_dark_style()
+        self._apply_theme()
 
         screen = QGuiApplication.primaryScreen()
         if screen:
@@ -163,43 +242,43 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._goto_page(0)
 
-    def _apply_dark_style(self):
-        self.setStyleSheet("""
-            QMainWindow, QWidget, QScrollArea, QScrollArea > QWidget { background: #0f1117; }
-            QLabel { color: #e2e4ea; background: transparent; }
-            QPushButton {
-                background: #6366f1;
+    def _apply_theme(self):
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget, QScrollArea, QScrollArea > QWidget {{ background: {BG_BASE}; }}
+            QLabel {{ color: {TEXT_PRIMARY}; background: transparent; }}
+            QPushButton {{
+                background: {ACCENT};
                 color: white;
                 border: none;
                 border-radius: 6px;
                 padding: 8px 20px;
                 font-size: 13px;
                 font-weight: 600;
-            }
-            QPushButton:hover { background: #818cf8; }
-            QPushButton:disabled { background: #2e3347; color: #5a5f7a; }
-            QPushButton#pageBtn {
-                background: #1e2130;
-                color: #e2e4ea;
-                border: 1px solid #2e3347;
+            }}
+            QPushButton:hover {{ background: {ACCENT_HOVER}; }}
+            QPushButton:disabled {{ background: {BG_DISABLED}; color: {TEXT_DISABLED}; }}
+            QPushButton#pageBtn {{
+                background: {BG_CARD};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER};
                 border-radius: 6px;
                 padding: 0;
                 font-size: 18px;
                 font-weight: 400;
-            }
-            QPushButton#pageBtn:hover { background: #2e3347; border-color: #3d4260; }
-            QPushButton#pageBtn:disabled {
-                background: #0f1117; color: #3d4260; border-color: #1e2130;
-            }
-            QScrollBar:vertical { background: #0f1117; width: 8px; border-radius: 4px; }
-            QScrollBar::handle:vertical { background: #2e3347; border-radius: 4px; min-height: 40px; }
-            QScrollBar::handle:hover { background: #3d4260; }
-            QProgressBar {
+            }}
+            QPushButton#pageBtn:hover {{ background: {BG_HOVER}; border-color: {BORDER_HOVER}; }}
+            QPushButton#pageBtn:disabled {{
+                background: {BG_BASE}; color: {TEXT_DISABLED}; border-color: {BG_DISABLED};
+            }}
+            QScrollBar:vertical {{ background: {BG_BASE}; width: 8px; border-radius: 4px; }}
+            QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 4px; min-height: 40px; }}
+            QScrollBar::handle:hover {{ background: {BORDER_HOVER}; }}
+            QProgressBar {{
                 border: none; border-radius: 4px;
-                background: #0f1117; text-align: center; color: #7a7f99;
-            }
-            QProgressBar::chunk { background: #6366f1; border-radius: 4px; }
-            QWidget#gridWidget { background: #0f1117; }
+                background: {BG_BASE}; text-align: center; color: {TEXT_MUTED};
+            }}
+            QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
+            QWidget#gridWidget {{ background: {BG_BASE}; }}
         """)
 
     def _setup_ui(self):
@@ -210,17 +289,17 @@ class MainWindow(QMainWindow):
 
         header = QFrame()
         header.setFixedHeight(58)
-        header.setStyleSheet("QFrame { background: #0f1117; border-bottom: 1px solid #2e3347; }")
+        header.setStyleSheet(f"QFrame {{ background: {BG_BASE}; border-bottom: 1px solid {BORDER}; }}")
         hlayout = QHBoxLayout(header)
         hlayout.setContentsMargins(20, 0, 20, 0)
         hlayout.setSpacing(12)
 
         lbl = QLabel(f"Search: {self.keyword}")
-        lbl.setStyleSheet("font-size: 16px; font-weight: 600; color: #e2e4ea;")
+        lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {TEXT_PRIMARY};")
         hlayout.addWidget(lbl)
 
         self.count_label = QLabel("0 selected")
-        self.count_label.setStyleSheet("color: #7a7f99; font-size: 13px;")
+        self.count_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 13px;")
         hlayout.addWidget(self.count_label)
 
         hlayout.addStretch()
@@ -235,7 +314,7 @@ class MainWindow(QMainWindow):
         hlayout.addWidget(self.prev_btn)
 
         self.page_label = QLabel("— / —")
-        self.page_label.setStyleSheet("color: #7a7f99; font-size: 13px;")
+        self.page_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 13px;")
         self.page_label.setFixedWidth(60)
         self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hlayout.addWidget(self.page_label)
@@ -273,7 +352,9 @@ class MainWindow(QMainWindow):
         root.addWidget(scroll)
 
         self.status_label = QLabel("Searching...")
-        self.status_label.setStyleSheet("color: #7a7f99; font-size: 12px; padding: 4px 16px; background: #0f1117;")
+        self.status_label.setStyleSheet(
+            f"color: {TEXT_MUTED}; font-size: 12px; padding: 4px 16px; background: {BG_BASE};"
+        )
         self.status_label.setFixedHeight(28)
         root.addWidget(self.status_label)
 
@@ -375,7 +456,7 @@ class MainWindow(QMainWindow):
         # 渲染
         cols = 5
         for i, (iconify_id, svg_bytes) in enumerate(results.items()):
-            pm = svg_bytes_to_pixmap(svg_bytes, 64, "#e2e4ea")
+            pm = svg_bytes_to_pixmap(svg_bytes, 64, TEXT_PRIMARY)
             card = IconCard(iconify_id, pm, self._on_card_click)
             # 跨页选中恢复
             if iconify_id in self.selected:
@@ -442,18 +523,43 @@ class MainWindow(QMainWindow):
 
         QApplication.instance().quit()
 
+    def closeEvent(self, event):
+        """窗口被关闭(用户按 X / Alt+F4 等主动行为)。
+        在 stderr 写一行机器可读标记,让 AI 区分"用户取消"和"程序崩溃"。"
+        """
+        if not self.selected:
+            print("[svg-picker] cancelled: window closed without selection", file=sys.stderr)
+        else:
+            names = ", ".join(sorted(self.selected))
+            print(
+                f"[svg-picker] cancelled: window closed with "
+                f"{len(self.selected)} icons selected but not confirmed ({names})",
+                file=sys.stderr
+            )
+        event.accept()
+        QApplication.instance().quit()
+
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: svg-picker <keyword>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        prog="svg-picker",
+        description="搜索 Iconify 图标,GUI 视觉选择,SVG 输出到 stdout。",
+    )
+    parser.add_argument("keyword", help="搜索关键词")
+    parser.add_argument(
+        "--theme", "-t",
+        choices=list(THEMES.keys()),
+        default="cream",
+        help="背景主题(默认: %(default)s)。可选: " + ", ".join(THEMES),
+    )
+    args = parser.parse_args()
 
-    keyword = sys.argv[1]
+    apply_theme(args.theme)
 
     app = QApplication(sys.argv)
     app.setStyle("fusion")
 
-    win = MainWindow(keyword)
+    win = MainWindow(args.keyword)
     win.show()
 
     sys.exit(app.exec())
