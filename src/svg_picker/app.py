@@ -2,7 +2,6 @@
 
 import re
 import sys
-import os
 import threading
 
 import requests
@@ -137,15 +136,23 @@ class MainWindow(QMainWindow):
         self.keyword = keyword
         self.selected = set()
         self.icon_cards = {}
-        self._all_results = {}
-        self._pending_icons = []
+
+        # 分页状态
+        self.page_size = 10
+        self.current_page = 0
+        self.total_matches = 0
+        self._cache = {}  # page -> {iconify_id: bytes}
+
+        # 后台任务状态
         self._pending_results = {}
+        self._pending_page = 0
         self._pending_total = 0
         self._pending_error = ""
 
         self.setWindowTitle(f"SVG Picker - {keyword}")
         self.setMinimumSize(680, 520)
         self.resize(780, 620)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._apply_dark_style()
 
         screen = QGuiApplication.primaryScreen()
@@ -154,7 +161,7 @@ class MainWindow(QMainWindow):
             self.move(rect.center() - self.rect().center())
 
         self._setup_ui()
-        self._start_search()
+        self._goto_page(0)
 
     def _apply_dark_style(self):
         self.setStyleSheet("""
@@ -171,6 +178,19 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background: #818cf8; }
             QPushButton:disabled { background: #2e3347; color: #5a5f7a; }
+            QPushButton#pageBtn {
+                background: #1e2130;
+                color: #e2e4ea;
+                border: 1px solid #2e3347;
+                border-radius: 6px;
+                padding: 0;
+                font-size: 18px;
+                font-weight: 400;
+            }
+            QPushButton#pageBtn:hover { background: #2e3347; border-color: #3d4260; }
+            QPushButton#pageBtn:disabled {
+                background: #0f1117; color: #3d4260; border-color: #1e2130;
+            }
             QScrollBar:vertical { background: #0f1117; width: 8px; border-radius: 4px; }
             QScrollBar::handle:vertical { background: #2e3347; border-radius: 4px; min-height: 40px; }
             QScrollBar::handle:hover { background: #3d4260; }
@@ -193,6 +213,7 @@ class MainWindow(QMainWindow):
         header.setStyleSheet("QFrame { background: #0f1117; border-bottom: 1px solid #2e3347; }")
         hlayout = QHBoxLayout(header)
         hlayout.setContentsMargins(20, 0, 20, 0)
+        hlayout.setSpacing(12)
 
         lbl = QLabel(f"Search: {self.keyword}")
         lbl.setStyleSheet("font-size: 16px; font-weight: 600; color: #e2e4ea;")
@@ -201,6 +222,31 @@ class MainWindow(QMainWindow):
         self.count_label = QLabel("0 selected")
         self.count_label.setStyleSheet("color: #7a7f99; font-size: 13px;")
         hlayout.addWidget(self.count_label)
+
+        hlayout.addStretch()
+
+        # 翻页控件
+        self.prev_btn = QPushButton("‹")
+        self.prev_btn.setObjectName("pageBtn")
+        self.prev_btn.setFixedSize(32, 32)
+        self.prev_btn.setEnabled(False)
+        self.prev_btn.setToolTip("Previous page (←)")
+        self.prev_btn.clicked.connect(lambda: self._goto_page(self.current_page - 1))
+        hlayout.addWidget(self.prev_btn)
+
+        self.page_label = QLabel("— / —")
+        self.page_label.setStyleSheet("color: #7a7f99; font-size: 13px;")
+        self.page_label.setFixedWidth(60)
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hlayout.addWidget(self.page_label)
+
+        self.next_btn = QPushButton("›")
+        self.next_btn.setObjectName("pageBtn")
+        self.next_btn.setFixedSize(32, 32)
+        self.next_btn.setEnabled(False)
+        self.next_btn.setToolTip("Next page (→)")
+        self.next_btn.clicked.connect(lambda: self._goto_page(self.current_page + 1))
+        hlayout.addWidget(self.next_btn)
 
         self.confirm_btn = QPushButton("Confirm")
         self.confirm_btn.setFixedWidth(120)
@@ -231,87 +277,126 @@ class MainWindow(QMainWindow):
         self.status_label.setFixedHeight(28)
         root.addWidget(self.status_label)
 
-    def _start_search(self):
-        self.status_label.setText("Searching Iconify...")
-        t = threading.Thread(target=self._search_thread, daemon=True)
+    def _goto_page(self, page):
+        """切到第 page 页(0-based)"""
+        if page < 0:
+            return
+        # 已经在这一页(防止重复触发)
+        if page == self.current_page and page in self._cache:
+            return
+        # 边界:总匹配数已知则不能超过
+        if self.total_matches and page * self.page_size >= self.total_matches:
+            return
+
+        # 缓存命中
+        if page in self._cache:
+            self._pending_page = page
+            self._pending_results = self._cache[page]
+            self._do_render_icons()
+            return
+
+        # 触发拉取
+        self.prev_btn.setEnabled(False)
+        self.next_btn.setEnabled(False)
+        self.status_label.setText(f"Loading page {page + 1}...")
+        self.progress.setRange(0, 0)
+        self.progress.show()
+        self._pending_page = page
+        t = threading.Thread(target=self._fetch_page_thread, args=(page,), daemon=True)
         t.start()
 
-    def _search_thread(self):
+    def _fetch_page_thread(self, page):
         try:
             resp = requests.get(
                 f"{ICONIFY_BASE}/search",
-                params={"query": self.keyword, "limit": 80},
+                params={
+                    "query": self.keyword,
+                    "limit": self.page_size,
+                    "start": page * self.page_size,
+                },
                 timeout=15
             )
             resp.raise_for_status()
-            icons = resp.json().get("icons", [])[:10]
-            self._pending_icons = icons
+            data = resp.json()
+            icons = data.get("icons", [])[:self.page_size]
+            # 第一次成功时记录 total
+            if page == 0:
+                self.total_matches = data.get("total", len(icons))
+            # 下载 SVG
+            results = {}
+            for id_ in icons:
+                svg_bytes = fetch_svg_bytes(id_)
+                if svg_bytes:
+                    results[id_] = svg_bytes
+            self._cache[page] = results
+            self._pending_results = results
+            self._pending_total = len(icons)
+            self._pending_page = page
             QMetaObject.invokeMethod(
-                self, "_do_search_done",
+                self, "_do_render_icons",
                 Qt.ConnectionType.QueuedConnection
             )
         except Exception as e:
             self._pending_error = str(e)
             QMetaObject.invokeMethod(
-                self, "_do_search_error",
+                self, "_do_render_error",
                 Qt.ConnectionType.QueuedConnection
             )
 
     @Slot()
-    def _do_search_done(self):
-        iconify_ids = self._pending_icons
-        self.status_label.setText(f"Found {len(iconify_ids)} icons, loading SVGs...")
-        self.progress.setRange(0, len(iconify_ids))
-        self.progress.setValue(0)
-
-        if not iconify_ids:
-            self.status_label.setText("No icons found.")
-            self.progress.hide()
-            return
-
-        t = threading.Thread(target=self._fetch_thread, args=(iconify_ids,), daemon=True)
-        t.start()
-
-    @Slot()
-    def _do_search_error(self):
-        self.progress.hide()
-        self.status_label.setText(f"Error: {self._pending_error}")
-
-    def _fetch_thread(self, iconify_ids):
-        results = {}
-        for id_ in iconify_ids:
-            data = fetch_svg_bytes(id_)
-            if data:
-                results[id_] = data
-        self._pending_results = results
-        self._pending_total = len(iconify_ids)
-        QMetaObject.invokeMethod(
-            self, "_do_render_icons",
-            Qt.ConnectionType.QueuedConnection
-        )
-
-    def event(self, event):
-        if event.type() == QEvent.Type.User:
-            self.progress.setValue(event.current)
-            self.status_label.setText(f"Loading SVGs... {event.current}/{event.total}")
-            return True
-        return super().event(event)
-
-    @Slot()
     def _do_render_icons(self):
+        page = self._pending_page
         results = self._pending_results
-        total = self._pending_total
-        self._all_results = results
-        self.progress.hide()
-        self.status_label.setText(f"Ready - {len(results)}/{total} icons")
+        total_fetched = self._pending_total
 
-        cols = max(1, self.width() // 88)
+        self.current_page = page
+
+        # 清空网格
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self.icon_cards.clear()
+
+        # 总页数估算
+        if self.total_matches > 0:
+            total_pages = max(1, (self.total_matches + self.page_size - 1) // self.page_size)
+        else:
+            total_pages = 1
+
+        # 状态文字
+        if not results:
+            self.status_label.setText(f"No icons on page {page + 1}.")
+        else:
+            self.status_label.setText(f"Page {page + 1}/{total_pages} · {len(results)} icons")
+        self.progress.hide()
+
+        # 渲染
+        cols = 5
         for i, (iconify_id, svg_bytes) in enumerate(results.items()):
             pm = svg_bytes_to_pixmap(svg_bytes, 64, "#e2e4ea")
             card = IconCard(iconify_id, pm, self._on_card_click)
+            # 跨页选中恢复
+            if iconify_id in self.selected:
+                card._selected = True
+                card._update_style()
             self.icon_cards[iconify_id] = card
             row, col = divmod(i, cols)
             self.grid_layout.addWidget(card, row, col)
+
+        # 页码 + 按钮启用/禁用
+        self.page_label.setText(f"{page + 1} / {total_pages}")
+        self.prev_btn.setEnabled(page > 0)
+        # 下一页条件:本次拿满了 AND 还没到最后一页
+        has_more = (total_fetched == self.page_size) and (page + 1 < total_pages)
+        self.next_btn.setEnabled(has_more)
+
+    @Slot()
+    def _do_render_error(self):
+        self.progress.hide()
+        self.status_label.setText(f"Error: {self._pending_error}")
+        self.prev_btn.setEnabled(self.current_page > 0)
 
     def _on_card_click(self, iconify_id, selected):
         if selected:
@@ -322,12 +407,32 @@ class MainWindow(QMainWindow):
         self.count_label.setText(f"{count} selected")
         self.confirm_btn.setEnabled(count > 0)
 
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key == Qt.Key.Key_Left:
+            if self.prev_btn.isEnabled():
+                self._goto_page(self.current_page - 1)
+                event.accept()
+                return
+        elif key == Qt.Key.Key_Right:
+            if self.next_btn.isEnabled():
+                self._goto_page(self.current_page + 1)
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
     def _confirm(self):
         if not self.selected:
             return
 
         for iconify_id in self.selected:
-            svg_bytes = self._all_results.get(iconify_id)
+            svg_bytes = None
+            # 在所有缓存页里找
+            for page_results in self._cache.values():
+                if iconify_id in page_results:
+                    svg_bytes = page_results[iconify_id]
+                    break
+            # 兜底:重新下载
             if not svg_bytes:
                 svg_bytes = fetch_svg_bytes(iconify_id)
             if svg_bytes:
@@ -336,13 +441,6 @@ class MainWindow(QMainWindow):
                 print()
 
         QApplication.instance().quit()
-
-
-class _ProgressEvent(QEvent):
-    def __init__(self, current, total):
-        super().__init__(QEvent.Type.User)
-        self.current = current
-        self.total = total
 
 
 def main():
