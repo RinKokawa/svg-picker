@@ -1,5 +1,10 @@
 # svg-picker
 
+[![PyPI version](https://img.shields.io/pypi/v/svg-picker)](https://pypi.org/project/svg-picker/)
+[![Python versions](https://img.shields.io/pypi/pyversions/svg-picker)](https://pypi.org/project/svg-picker/)
+[![License](https://img.shields.io/pypi/l/svg-picker)](https://github.com/RinKokawa/svg-picker/blob/main/LICENSE)
+[![Downloads](https://img.shields.io/pypi/dm/svg-picker)](https://pypistats.org/packages/svg-picker)
+
 **A Human-in-the-Loop Icon Selector for AI Agents**
 
 > Inspired by [HULA: Human-In-the-Loop Software Development Agents](https://arxiv.org/abs/2411.12924) (ICSE SEIP 2025)
