@@ -12,7 +12,8 @@ from PySide6.QtCore import Qt, QEvent, QMetaObject, Slot
 from PySide6.QtGui import QPainter, QColor, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QLabel, QPushButton, QScrollArea, QFrame, QProgressBar
+    QGridLayout, QLabel, QPushButton, QScrollArea, QFrame, QProgressBar,
+    QToolButton, QMenu
 )
 
 ICONIFY_BASE = "https://api.iconify.design"
@@ -251,6 +252,9 @@ class MainWindow(QMainWindow):
         # QApplication.quit() 会顺带触发主窗口 closeEvent,
         # 若不区分,confirm 路径也会输出 cancel 标记。
         self._confirmed = False
+        # 不满意信号:用户主动表达"这些都不行",Agent 应当换关键词或重做搜索,
+        # 而不是静默取消 / 随机选一个。
+        self._dissatisfied = False
 
         # 分页状态
         self.page_size = max(1, page_size)
@@ -293,6 +297,17 @@ class MainWindow(QMainWindow):
             }}
             QPushButton:hover {{ background: {ACCENT_HOVER}; }}
             QPushButton:disabled {{ background: {BG_DISABLED}; color: {TEXT_DISABLED}; }}
+            QToolButton#moreBtn {{
+                background: {ACCENT};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 0;
+                font-size: 14px;
+                font-weight: 700;
+            }}
+            QToolButton#moreBtn:hover {{ background: {ACCENT_HOVER}; }}
+            QToolButton#moreBtn::menu-indicator {{ image: none; }}
             QPushButton#pageBtn {{
                 background: {BG_CARD};
                 color: {TEXT_PRIMARY};
@@ -368,6 +383,25 @@ class MainWindow(QMainWindow):
         self.confirm_btn.setEnabled(False)
         self.confirm_btn.clicked.connect(self._confirm)
         hlayout.addWidget(self.confirm_btn)
+
+        # Confirm 右侧的 chevron —— 展开"用户主动反馈"菜单。
+        # 至少要支持"不满意"这种语义,Agent 拿到信号后才能换关键词,
+        # 而不是被 cancel / confirm 二元语义逼到硬猜。
+        self.more_btn = QToolButton()
+        self.more_btn.setText("▾")
+        self.more_btn.setObjectName("moreBtn")
+        self.more_btn.setFixedSize(28, 32)
+        self.more_btn.setToolTip("More actions")
+        # InstantPopup:按下立即展开菜单,不进入 checked 状态
+        self.more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        more_menu = QMenu(self.more_btn)
+        act_dissatisfied = more_menu.addAction("不满意")
+        act_dissatisfied.setToolTip(
+            "当前关键词下没有任何合适的图标 —— Agent 应换关键词或换思路"
+        )
+        act_dissatisfied.triggered.connect(self._signal_dissatisfied)
+        self.more_btn.setMenu(more_menu)
+        hlayout.addWidget(self.more_btn)
         root.addWidget(header)
 
         self.progress = QProgressBar()
@@ -563,12 +597,35 @@ class MainWindow(QMainWindow):
 
         QApplication.instance().quit()
 
+    def _signal_dissatisfied(self):
+        """用户主动反馈:当前结果都不行,Agent 应换关键词或换思路。
+        写到 stderr 一行机器可读标记,然后退出。
+        和 Confirm 路径一样,closeEvent 会顺带触发,所以要先置 _dissatisfied。
+        """
+        self._dissatisfied = True
+
+        if self.selected:
+            names = ", ".join(sorted(self.selected))
+            print(
+                f"[svg-picker] dissatisfied: user rejected all icons "
+                f"(had {len(self.selected)} pre-selected: {names})",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "[svg-picker] dissatisfied: user rejected all icons",
+                file=sys.stderr,
+            )
+
+        QApplication.instance().quit()
+
     def closeEvent(self, event):
-        """窗口被关闭(用户按 X / Alt+F4 等主动行为,或 _confirm() 触发的 quit())。
+        """窗口被关闭(用户按 X / Alt+F4 等主动行为,或 _confirm() / _signal_dissatisfied() 触发的 quit())。
         在 stderr 写一行机器可读标记,让 AI 区分"用户取消"和"程序崩溃"。
         _confirmed 为 True 时(用户已点 Confirm),不再写 cancel 行 —— stdout 已经拿到 SVG。
+        _dissatisfied 为 True 时同样跳过 —— 信号行已由 _signal_dissatisfied 写过了。
         """
-        if not self._confirmed:
+        if not (self._confirmed or self._dissatisfied):
             if not self.selected:
                 print("[svg-picker] cancelled: window closed without selection", file=sys.stderr)
             else:
