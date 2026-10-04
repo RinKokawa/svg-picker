@@ -247,6 +247,10 @@ class MainWindow(QMainWindow):
         self.keyword = keyword
         self.selected = set()
         self.icon_cards = {}
+        # 标记本次会话是否已通过 Confirm 走完。
+        # QApplication.quit() 会顺带触发主窗口 closeEvent,
+        # 若不区分,confirm 路径也会输出 cancel 标记。
+        self._confirmed = False
 
         # 分页状态
         self.page_size = max(1, page_size)
@@ -538,6 +542,10 @@ class MainWindow(QMainWindow):
         if not self.selected:
             return
 
+        # 先置位:quit() 会顺带触发 closeEvent,要在那之前标记成 confirmed,
+        # 否则 closeEvent 会把 cancel 行也写到 stderr。
+        self._confirmed = True
+
         for iconify_id in self.selected:
             svg_bytes = None
             # 在所有缓存页里找
@@ -556,18 +564,20 @@ class MainWindow(QMainWindow):
         QApplication.instance().quit()
 
     def closeEvent(self, event):
-        """窗口被关闭(用户按 X / Alt+F4 等主动行为)。
-        在 stderr 写一行机器可读标记,让 AI 区分"用户取消"和"程序崩溃"。"
+        """窗口被关闭(用户按 X / Alt+F4 等主动行为,或 _confirm() 触发的 quit())。
+        在 stderr 写一行机器可读标记,让 AI 区分"用户取消"和"程序崩溃"。
+        _confirmed 为 True 时(用户已点 Confirm),不再写 cancel 行 —— stdout 已经拿到 SVG。
         """
-        if not self.selected:
-            print("[svg-picker] cancelled: window closed without selection", file=sys.stderr)
-        else:
-            names = ", ".join(sorted(self.selected))
-            print(
-                f"[svg-picker] cancelled: window closed with "
-                f"{len(self.selected)} icons selected but not confirmed ({names})",
-                file=sys.stderr
-            )
+        if not self._confirmed:
+            if not self.selected:
+                print("[svg-picker] cancelled: window closed without selection", file=sys.stderr)
+            else:
+                names = ", ".join(sorted(self.selected))
+                print(
+                    f"[svg-picker] cancelled: window closed with "
+                    f"{len(self.selected)} icons selected but not confirmed ({names})",
+                    file=sys.stderr
+                )
         event.accept()
         QApplication.instance().quit()
 
