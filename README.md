@@ -67,6 +67,9 @@ The human acts as a **visual judge** — the AI remains in full control of the w
 
 - **Native GUI** — PySide6 window, no browser required
 - **Themable** — `cream` / `sky` / `dark` backgrounds via `--theme`
+- **Live theme cycling** *(1.1)* — Click the 🎨 button in the header to cycle through themes without restarting the window
+- **Multi-keyword search** *(1.1)* — Pass multiple keywords; the search dropdown lets you switch between them in-window without relaunching (avoid wasted context when one keyword returns poor results)
+- **On-the-fly keyword add** *(1.1)* — Add new keywords from the search dropdown and search them immediately
 - **Pagination** — 10 icons per page, flip with `‹` / `›` buttons or `←` / `→` keys; selections persist across pages
 - **Iconify API** — Access to 150+ icon sets, 500,000+ icons
 - **stdout output** — SVG code flows directly into the AI's context
@@ -93,23 +96,26 @@ pip install -e .
 ## Usage
 
 ```bash
-svg-picker <keyword> [--theme cream|sky|dark] [--per-page N]
+svg-picker <keyword> [<keyword> ...] [--theme cream|sky|dark] [--per-page N]
 ```
 
 ### Options
 
 | Flag | Description |
 |---|---|
+| (positional) | One or more keywords. Pass multiple to switch between them in-window via the search dropdown without relaunching. |
 | `-t`, `--theme <name>` | Background theme. Choices: `cream` (default), `sky`, `dark` |
 | `-n`, `--per-page <N>` | Icons per page (default: `10`) |
 
 ### Examples
 
 ```bash
-svg-picker home                  # default cream theme
-svg-picker home --theme sky      # sky blue background
-svg-picker arrow -t dark         # dark theme, short flag
-svg-picker home -n 20            # 20 icons per page
+svg-picker home                          # default cream theme
+svg-picker home --theme sky              # sky blue background
+svg-picker arrow -t dark                 # dark theme, short flag
+svg-picker home -n 20                    # 20 icons per page
+svg-picker home house dwelling           # three fallback keywords; switch in-window
+svg-picker sword blade katana claymore   # near-synonyms for "sword"
 ```
 
 ### Default theme via `.env`
@@ -125,11 +131,14 @@ Resolution order: **CLI `--theme` → `.env` `SVG_PICKER_THEME` → `cream`**. A
 
 ### Steps
 
-1. Window opens with the first page of 10 matching icons
+1. Window opens with the first page of 10 matching icons for the first keyword
 2. Click to select one or more; click again to deselect
 3. Flip pages with `‹` / `›` buttons or `←` / `→` keys — selections persist across pages
-4. Press **Confirm** — SVG source code is printed to stdout, window closes
-5. Close the window (X) to cancel — a `[svg-picker] cancelled: ...` line is written to stderr
+4. *(Multiple keywords)* Click the **`Search: <keyword> ▾`** button to switch to another keyword — selection, page, and cache all reset for the new search
+5. *(Multiple keywords)* Type a new keyword into the popup's input and press `Enter` (or click **+**) to search it immediately
+6. Click the 🎨 button any time to cycle the theme (cream → sky → dark → cream). Card colors update in place
+7. Press **Confirm** — SVG source code is printed to stdout, window closes
+8. Close the window (X) to cancel — a `[svg-picker] cancelled: ...` line is written to stderr
 
 ---
 
@@ -144,11 +153,19 @@ Place this file as `~/.claude/skills/svg-picker.md`:
 
 Pick SVG icons via keyword search with human visual selection.
 
-Usage: svg-picker <keyword> [--theme cream|sky|dark] [--per-page N]
+Usage: svg-picker <keyword> [<keyword> ...] [--theme cream|sky|dark] [--per-page N]
 
 The human selects icons from the window. SVG source code is output to stdout.
 If the window is closed without confirming, a "[svg-picker] cancelled: ..."
 line is written to stderr — read stderr to distinguish cancel from crash.
+
+Tips for AI callers:
+
+- Pass 2-4 near-synonym keywords (e.g. `svg-picker home house dwelling`)
+  so the human can switch via the dropdown if one returns poor results
+  without you having to relaunch and waste a turn.
+- The 🎨 button in the header cycles the theme live — no need to set
+  `--theme` up front unless the user asked for a specific look.
 ```
 
 ### Programmatic Usage

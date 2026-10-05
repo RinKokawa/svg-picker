@@ -62,6 +62,9 @@ svg-picker 将这一原则应用于一个具体、狭窄的任务：**图标选�
 
 - **原生 GUI** — PySide6 窗口，无需浏览器
 - **可换主题** — `cream` / `sky` / `dark` 三种背景(`--theme` 切换)
+- **实时主题切换** *(1.1)* — 点击标题栏的 🎨 按钮即可循环切换主题，无需重启窗口
+- **多关键词搜索** *(1.1)* — 一次传入多个关键词，通过窗口内的搜索下拉快速切换，不需要重新拉起（避免关键词选得不好时反复 reject 浪费上下文）
+- **临时加关键词** *(1.1)* — 在搜索下拉底部输入新关键词，立刻查询
 - **分页浏览** — 每页 10 个图标，按 `‹` / `›` 按钮或 `←` / `→` 键翻页；选中状态跨页保留
 - **Iconify API** — 接入 150+ 图标集、50 万+ 图标
 - **stdout 输出** — SVG 代码直接流入 AI 上下文
@@ -88,21 +91,26 @@ pip install -e .
 ## 使用方法
 
 ```bash
-svg-picker <关键词> [--theme cream|sky|dark]
+svg-picker <关键词> [<关键词> ...] [--theme cream|sky|dark] [--per-page N]
 ```
 
 ### 选项
 
 | 参数 | 说明 |
 |---|---|
+| (位置参数) | 一个或多个关键词。传多个时可以在窗口内通过搜索下拉切换，不需要重新拉起 |
 | `-t`, `--theme <名称>` | 背景主题。可选：`cream`(默认)、`sky`、`dark` |
+| `-n`, `--per-page <N>` | 每页图标数（默认 `10`） |
 
 ### 示例
 
 ```bash
-svg-picker home                  # 默认 cream 米黄主题
-svg-picker home --theme sky      # 天蓝背景
-svg-picker arrow -t dark         # 深色主题（短选项）
+svg-picker home                          # 默认 cream 米黄主题
+svg-picker home --theme sky              # 天蓝背景
+svg-picker arrow -t dark                 # 深色主题（短选项）
+svg-picker home -n 20                    # 每页 20 个图标
+svg-picker home house dwelling           # 三个备选关键词；可在窗口内切换
+svg-picker sword blade katana claymore   # "剑"的近义词
 ```
 
 ### 通过 `.env` 设置默认主题
@@ -118,11 +126,14 @@ SVG_PICKER_THEME=sky
 
 ### 步骤
 
-1. 窗口打开，显示第一页 10 个匹配图标
+1. 窗口打开，显示第一个关键词的第一页 10 个匹配图标
 2. 点击选中，再次点击取消选择
 3. 按 `‹` / `›` 按钮或 `←` / `→` 键翻页 — 选中状态跨页保留
-4. 点击 **Confirm** — SVG 源码打印到 stdout，窗口关闭
-5. 直接关窗（点 X）= 取消，会在 stderr 打印一行 `[svg-picker] cancelled: ...`
+4. *(多关键词)* 点击 **`Search: <关键词> ▾`** 按钮可以切换到另一个关键词 — 选中、页码、缓存全部按新关键词重置
+5. *(多关键词)* 在弹出框底部的输入框里敲新关键词 + `Enter`（或点 **+**），立即查询
+6. 任何时候点 🎨 按钮可以循环切换主题（cream → sky → dark → cream），卡片颜色会原地刷新
+7. 点击 **Confirm** — SVG 源码打印到 stdout，窗口关闭
+8. 直接关窗（点 X）= 取消，会在 stderr 打印一行 `[svg-picker] cancelled: ...`
 
 ---
 
@@ -137,11 +148,19 @@ SVG_PICKER_THEME=sky
 
 通过关键词搜索，以人类视觉选择方式获取 SVG 图标。
 
-用法: svg-picker <关键词> [--theme cream|sky|dark]
+用法: svg-picker <关键词> [<关键词> ...] [--theme cream|sky|dark] [--per-page N]
 
 人类从窗口中选择图标，SVG 源码输出到 stdout。
 若窗口被关闭而未确认，stderr 会输出一行 `[svg-picker] cancelled: ...` —
 读 stderr 可区分取消和崩溃。
+
+给 AI 调用者的提示：
+
+- 一次传 2-4 个近义关键词（例如 `svg-picker home house dwelling`），
+  这样某个关键词结果不好时人类可以直接在窗口里切下一个，不需要你
+  重新拉起浪费一轮。
+- 标题栏的 🎨 按钮可以实时循环切换主题 — 用户没特别要求外观时不用
+  一开始就指定 `--theme`。
 ```
 
 ### 程序化调用
