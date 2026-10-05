@@ -18,7 +18,11 @@ def main() -> None:
         prog="svg-picker",
         description="搜索 Iconify 图标,GUI 视觉选择,SVG 输出到 stdout。",
     )
-    parser.add_argument("keyword", help="搜索关键词")
+    parser.add_argument(
+        "keyword",
+        nargs="+",
+        help="搜索关键词。可传多个,失败时在窗口里快速切换(不用每次 reject 重新拉起)",
+    )
 
     # 确保 .env 存在(空文件也 OK,用户后续可编辑)
     ensure_dotenv()

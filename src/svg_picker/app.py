@@ -17,7 +17,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QScrollArea, QFrame, QProgressBar,
-    QToolButton,
+    QToolButton, QLineEdit,
 )
 
 from svg_picker.iconify import fetch_svg_bytes, search_icons, svg_bytes_to_pixmap
@@ -162,13 +162,26 @@ class RotatableToolButton(QToolButton):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, keyword, page_size=10, theme: Theme | None = None):
+    def __init__(self, keywords, page_size=10, theme: Theme | None = None):
         super().__init__()
         if theme is None:
             theme = get_theme(DEFAULT_THEME)
         self.theme = theme
 
-        self.keyword = keyword
+        # keywords 接受 list / tuple / 单 str —— 单 str 也支持是为了测试时少打字
+        if isinstance(keywords, str):
+            keywords = [keywords]
+        if not keywords:
+            raise ValueError("MainWindow requires at least one keyword")
+        # 去重但保序,避免重复的关键词在 popup 里出现两次
+        seen: set[str] = set()
+        self.keywords: list[str] = []
+        for kw in keywords:
+            if kw not in seen:
+                seen.add(kw)
+                self.keywords.append(kw)
+        self.current_keyword_idx = 0
+
         self.selected = set()
         self.icon_cards = {}
         # 标记本次会话是否已通过 Confirm 走完。
@@ -193,7 +206,7 @@ class MainWindow(QMainWindow):
         self._pending_total = 0
         self._pending_error = ""
 
-        self.setWindowTitle(f"SVG Picker - {keyword}")
+        self.setWindowTitle(f"SVG Picker - {self._current_keyword()}")
         self.setMinimumSize(680, 520)
         self.resize(780, 620)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -207,6 +220,9 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._goto_page(0)
 
+    def _current_keyword(self) -> str:
+        return self.keywords[self.current_keyword_idx]
+
     def _apply_theme(self):
         t = self.theme
         self.setStyleSheet(f"""
@@ -214,9 +230,62 @@ class MainWindow(QMainWindow):
             QLabel {{ color: {t.text_primary}; background: transparent; }}
             /* header 区:由 objectName 控制颜色,切主题时自动跟着变 */
             QFrame#header {{ background: {t.bg_base}; border-bottom: 1px solid {t.border}; }}
-            QLabel#searchLabel {{ font-size: 16px; font-weight: 600; color: {t.text_primary}; }}
+            QPushButton#searchBtn {{
+                background: transparent;
+                color: {t.text_primary};
+                border: 1px solid transparent;
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 15px;
+                font-weight: 600;
+                text-align: left;
+            }}
+            QPushButton#searchBtn:hover {{ background: {t.bg_hover}; border-color: {t.border}; }}
             QLabel#countLabel, QLabel#pageLabel {{ color: {t.text_muted}; font-size: 13px; }}
             QLabel#statusLabel {{ color: {t.text_muted}; font-size: 12px; padding: 4px 16px; background: {t.bg_base}; }}
+            /* keyword popup:每个 keyword 一行,当前 keyword 用 :checked 高亮 */
+            QFrame#keywordPopup {{
+                background: {t.bg_card};
+                border: 1px solid {t.border};
+                border-radius: 6px;
+            }}
+            QPushButton#keywordBtn {{
+                background: {t.bg_card};
+                color: {t.text_primary};
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-size: 13px;
+                text-align: left;
+            }}
+            QPushButton#keywordBtn:hover {{ background: {t.bg_hover}; }}
+            QPushButton#keywordBtn:checked {{
+                background: {t.accent_sel_bg};
+                color: {t.accent};
+                font-weight: 600;
+            }}
+            /* popup 末尾的"添加关键词"行 */
+            QFrame#popupDivider {{ background: {t.border}; max-height: 1px; border: none; }}
+            QLineEdit#kwInput {{
+                background: {t.bg_base};
+                color: {t.text_primary};
+                border: 1px solid {t.border};
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 13px;
+                selection-background-color: {t.accent_sel_bg};
+            }}
+            QLineEdit#kwInput:focus {{ border-color: {t.accent}; }}
+            QPushButton#kwAddBtn {{
+                background: {t.bg_base};
+                color: {t.text_primary};
+                border: 1px solid {t.border};
+                border-radius: 4px;
+                font-size: 16px;
+                font-weight: 600;
+                padding: 0;
+            }}
+            QPushButton#kwAddBtn:hover {{ background: {t.bg_hover}; border-color: {t.border_hover}; }}
             QPushButton {{
                 background: {t.accent};
                 color: white;
@@ -322,9 +391,15 @@ class MainWindow(QMainWindow):
         hlayout.setContentsMargins(20, 0, 20, 0)
         hlayout.setSpacing(12)
 
-        lbl = QLabel(f"Search: {self.keyword}")
-        lbl.setObjectName("searchLabel")
-        hlayout.addWidget(lbl)
+        # Search 按钮 —— 点开是 keyword 列表。当前关键词写在按钮文字里,
+        # 切换关键词会重置分页/缓存/选中并重新拉第 0 页。
+        # 视觉上跟 searchLabel 等大,加 hover 反馈。
+        self.search_btn = QPushButton(f"Search: {self._current_keyword()} ▾")
+        self.search_btn.setObjectName("searchBtn")
+        self.search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_btn.setToolTip("Switch keyword")
+        self.search_btn.clicked.connect(self._toggle_keyword_popup)
+        hlayout.addWidget(self.search_btn)
 
         self.count_label = QLabel("0 selected")
         self.count_label.setObjectName("countLabel")
@@ -418,6 +493,49 @@ class MainWindow(QMainWindow):
         self.dissatisfied_btn.clicked.connect(self._signal_dissatisfied)
         popup_layout.addWidget(self.dissatisfied_btn)
 
+        # keyword popup —— 列出所有传入的关键词,当前选中那个 :checked 高亮。
+        # 切换关键词会重置分页/缓存/选中,然后重新拉第 0 页。
+        # 末尾带一个输入框 + Add 按钮,让用户现场加新关键词。
+        self.keyword_popup = QFrame(self)
+        self.keyword_popup.setObjectName("keywordPopup")
+        self.keyword_popup.hide()
+        kw_layout = QVBoxLayout(self.keyword_popup)
+        kw_layout.setSpacing(2)
+        kw_layout.setContentsMargins(4, 4, 4, 4)
+        self._kw_buttons: list[QPushButton] = []
+        for kw in self.keywords:
+            btn = QPushButton(kw)
+            btn.setObjectName("keywordBtn")
+            btn.setCheckable(True)
+            btn.setFixedHeight(32)
+            if kw == self._current_keyword():
+                btn.setChecked(True)
+            btn.clicked.connect(lambda _checked=False, k=kw: self._switch_keyword(k))
+            kw_layout.addWidget(btn)
+            self._kw_buttons.append(btn)
+        # 末尾:分隔 + 输入 + 添加按钮
+        kw_layout.addSpacing(4)
+        divider = QFrame()
+        divider.setObjectName("popupDivider")
+        divider.setFixedHeight(1)
+        kw_layout.addWidget(divider)
+        kw_layout.addSpacing(4)
+        input_row = QHBoxLayout()
+        input_row.setSpacing(4)
+        input_row.setContentsMargins(0, 0, 0, 0)
+        self.kw_input = QLineEdit()
+        self.kw_input.setObjectName("kwInput")
+        self.kw_input.setPlaceholderText("Add keyword...")
+        self.kw_input.returnPressed.connect(self._add_keyword)
+        input_row.addWidget(self.kw_input)
+        add_btn = QPushButton("+")
+        add_btn.setObjectName("kwAddBtn")
+        add_btn.setFixedSize(28, 28)
+        add_btn.setToolTip("Add keyword")
+        add_btn.clicked.connect(self._add_keyword)
+        input_row.addWidget(add_btn)
+        kw_layout.addLayout(input_row)
+
         # 全局事件过滤:popup 开着时,鼠标点外面就把 popup 关掉
         QApplication.instance().installEventFilter(self)
         root.addWidget(header)
@@ -475,7 +593,7 @@ class MainWindow(QMainWindow):
     def _fetch_page_thread(self, page):
         try:
             icons, total = search_icons(
-                self.keyword, self.page_size, page * self.page_size
+                self._current_keyword(), self.page_size, page * self.page_size
             )
             if page == 0:
                 self.total_matches = total
@@ -580,6 +698,103 @@ class MainWindow(QMainWindow):
         else:
             self._show_popup()
 
+    def _show_keyword_popup(self):
+        """定位 + 显示 keyword popup,左对齐挂在 search 按钮正下方。
+
+        高度 = 关键词按钮区 + 分隔 + 输入框行。让 layout 自己算。
+        """
+        max_text_w = max(
+            (btn.sizeHint().width() for btn in self._kw_buttons),
+            default=80,
+        )
+        popup_w = max(self.search_btn.width(), max_text_w + 32)
+        # 锁宽,让 layout 算高
+        self.keyword_popup.setFixedWidth(popup_w)
+        self.keyword_popup.adjustSize()
+        anchor = self.search_btn.mapTo(self, QPoint(0, self.search_btn.height()))
+        self.keyword_popup.move(anchor.x(), anchor.y())
+        self.keyword_popup.show()
+        self.keyword_popup.raise_()
+
+    def _hide_keyword_popup(self):
+        if self.keyword_popup.isVisible():
+            self.keyword_popup.hide()
+
+    def _toggle_keyword_popup(self):
+        if self.keyword_popup.isVisible():
+            self._hide_keyword_popup()
+        else:
+            self._show_keyword_popup()
+
+    def _switch_keyword(self, kw: str) -> None:
+        """切换到列表里另一个关键词:重置分页/缓存/网格/选中,重新拉第 0 页。
+
+        不同关键词意图不同,跨关键词保留选中容易误选,所以清空 selected。
+        """
+        if kw == self._current_keyword():
+            self._hide_keyword_popup()
+            return
+        if kw not in self.keywords:
+            return
+        self.current_keyword_idx = self.keywords.index(kw)
+        self.setWindowTitle(f"SVG Picker - {kw}")
+        self.search_btn.setText(f"Search: {kw} ▾")
+
+        # 更新 popup 里哪个 button 是 :checked
+        for i, btn in enumerate(self._kw_buttons):
+            btn.setChecked(self.keywords[i] == kw)
+
+        # 清掉输入框里残留文字(避免下次开 popup 看到旧输入)
+        if hasattr(self, "kw_input"):
+            self.kw_input.clear()
+
+        # 重置分页 / 缓存 / 网格 / 选中
+        self.current_page = 0
+        self.total_matches = 0
+        self._cache.clear()
+        self._pending_results = {}
+        self._pending_page = 0
+        self._pending_total = 0
+        self._pending_error = ""
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self.icon_cards.clear()
+        self.selected.clear()
+        self.count_label.setText("0 selected")
+        self.confirm_btn.setEnabled(False)
+
+        self._hide_keyword_popup()
+        self._goto_page(0)
+
+    def _add_keyword(self) -> None:
+        """从 popup 末尾的输入框拿关键词,加进列表(去重),新建 button,
+        切过去并重渲。空输入只是关 popup,什么都不做。
+        """
+        text = self.kw_input.text().strip()
+        self.kw_input.clear()
+        if not text:
+            self._hide_keyword_popup()
+            return
+        if text in self.keywords:
+            # 已存在 —— 等价于从列表里点一下
+            self._switch_keyword(text)
+            return
+        # 新关键词:append + 插 button(在 divider 之前) + 切过去 + 重渲
+        self.keywords.append(text)
+        btn = QPushButton(text)
+        btn.setObjectName("keywordBtn")
+        btn.setCheckable(True)
+        btn.setFixedHeight(32)
+        btn.clicked.connect(lambda _checked=False, k=text: self._switch_keyword(k))
+        self._kw_buttons.append(btn)
+        layout = self.keyword_popup.layout()
+        # divider 现在在 count() - 2(input_row 是最后一项)
+        layout.insertWidget(layout.count() - 2, btn)
+        self._switch_keyword(text)
+
     def _animate_chevron(self, target: float, duration_ms: int = 180):
         """用 QPropertyAnimation 在 chevron 当前角度和 target 之间 lerp。
         InOutQuad 让起步/收尾更柔和。重复触发会停掉旧的、再启新的。
@@ -628,27 +843,40 @@ class MainWindow(QMainWindow):
         self.set_theme(get_theme(next_theme_name(self.theme.name)))
 
     def eventFilter(self, obj, event):
-        """popup 开着时,popup 之外的鼠标按下都把 popup 关掉。
-        但 chevron 自己点的话别在这里关 —— 它的 clicked 信号会 toggle,
+        """popup 开着时,popup 之外的鼠标按下都把对应的 popup 关掉。
+        但 search 按钮 / chevron 自己点的话别在这里关 —— 它们的 clicked 信号会 toggle,
         不然会出现 filter 关一次 + clicked 又开一次,动画来回跑吃一半的 bug。
 
         用全局坐标判断而不是 obj is more_btn:PySide6 的 obj 身份比较偶尔不稳,
-        几何对比更稳。
+        几何对比更稳。两个 popup 互相独立,各自管自己。
         """
-        if self.more_popup.isVisible() and event.type() == QEvent.Type.MouseButtonPress:
-            try:
-                gp = event.globalPosition().toPoint()
-            except AttributeError:
-                gp = QCursor.pos()
+        if event.type() != QEvent.Type.MouseButtonPress:
+            return super().eventFilter(obj, event)
+        try:
+            gp = event.globalPosition().toPoint()
+        except AttributeError:
+            gp = QCursor.pos()
+
+        # chevron popup
+        if self.more_popup.isVisible():
             chevron_tl = self.more_btn.mapToGlobal(QPoint(0, 0))
             chevron_rect = QRect(chevron_tl, self.more_btn.size())
-            if chevron_rect.contains(gp):
-                # 点在 chevron 上,留给 clicked 处理 toggle
-                return super().eventFilter(obj, event)
-            popup_tl = self.more_popup.mapToGlobal(QPoint(0, 0))
-            popup_rect = QRect(popup_tl, self.more_popup.size())
-            if not popup_rect.contains(gp):
-                self._hide_popup()
+            if not chevron_rect.contains(gp):
+                popup_tl = self.more_popup.mapToGlobal(QPoint(0, 0))
+                popup_rect = QRect(popup_tl, self.more_popup.size())
+                if not popup_rect.contains(gp):
+                    self._hide_popup()
+
+        # keyword popup
+        if self.keyword_popup.isVisible():
+            search_tl = self.search_btn.mapToGlobal(QPoint(0, 0))
+            search_rect = QRect(search_tl, self.search_btn.size())
+            if not search_rect.contains(gp):
+                popup_tl = self.keyword_popup.mapToGlobal(QPoint(0, 0))
+                popup_rect = QRect(popup_tl, self.keyword_popup.size())
+                if not popup_rect.contains(gp):
+                    self._hide_keyword_popup()
+
         return super().eventFilter(obj, event)
 
     def _on_card_click(self, iconify_id, selected):
