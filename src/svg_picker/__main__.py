@@ -52,6 +52,22 @@ def main() -> None:
         default=10,
         help="每页显示的图标数(默认: %(default)s)",
     )
+    parser.add_argument(
+        "--context",
+        default="",
+        help="本次选择的用途/上下文。用于 Agent 恢复工作流时理解选择结果。",
+    )
+    parser.add_argument(
+        "--next-action",
+        default="",
+        help="选择完成后 Agent 应继续执行的动作。",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=("svg", "json"),
+        default="svg",
+        help="stdout 输出格式。svg 保持兼容；json 输出结构化 Agent 结果。",
+    )
     args = parser.parse_args()
 
     if args.per_page < 1:
@@ -64,7 +80,14 @@ def main() -> None:
 
     # 延迟导入 —— 让 `svg-picker --help` 不需要拉起整个 Qt 堆栈
     from svg_picker.app import MainWindow
-    win = MainWindow(args.keyword, page_size=args.per_page, theme=theme)
+    win = MainWindow(
+        args.keyword,
+        page_size=args.per_page,
+        theme=theme,
+        context=args.context,
+        next_action=args.next_action,
+        output_format=args.output_format,
+    )
     win.show()
 
     sys.exit(app.exec())
