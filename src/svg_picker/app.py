@@ -252,10 +252,14 @@ class IconCard(QFrame):
         font.setPointSize(7)
         painter.setFont(font)
         name = self.iconify_id.split(":")[-1] if ":" in self.iconify_id else self.iconify_id
+        # 留 4px 左右 padding;超长名字按词自动换行,不再 [:14] 硬截断
+        label_rect = self.rect().adjusted(4, 0, -4, -2)
         painter.drawText(
-            self.rect(),
-            Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
-            name[:14]
+            label_rect,
+            Qt.AlignmentFlag.AlignBottom
+            | Qt.AlignmentFlag.AlignHCenter
+            | Qt.TextFlag.TextWordWrap,
+            name,
         )
 
 
