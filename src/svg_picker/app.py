@@ -8,15 +8,32 @@ import threading
 
 import requests
 
-from PySide6.QtCore import Qt, QEvent, QMetaObject, Slot
-from PySide6.QtGui import QPainter, QColor, QGuiApplication, QPixmap
+from PySide6.QtCore import (
+    Qt, QEvent, QMetaObject, Slot, QPoint, QRect, QSize,
+    Property, QPropertyAnimation, QEasingCurve,
+)
+from PySide6.QtGui import (
+    QPainter, QColor, QGuiApplication, QPixmap, QCursor, QIcon, QTransform,
+)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QScrollArea, QFrame, QProgressBar,
-    QToolButton, QMenu
+    QToolButton
 )
 
 ICONIFY_BASE = "https://api.iconify.design"
+
+# chevron 按钮的 SVG 图标 —— 自己用 svg-picker 选的 (iconmind:chevron-up-duotone-bold)。
+# 用 currentColor 描线,渲染时被 svg_bytes_to_pixmap 染成 white,跟按钮文字一致。
+CHEVRON_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" '
+    b'viewBox="0 0 24 24">'
+    b'<g fill="none" stroke="currentColor" stroke-linecap="round" '
+    b'stroke-linejoin="round" stroke-width="2.5">'
+    b'<path stroke-width="5.5" d="m5 15 7 -7 7 7" opacity=".2"/>'
+    b'<path d="m5 15 7 -7 7 7"/>'
+    b'</g></svg>'
+)
 
 # 主题字典 — 每套配色覆盖所有 UI 元素
 THEMES = {
@@ -242,6 +259,47 @@ class IconCard(QFrame):
         )
 
 
+class RotatableToolButton(QToolButton):
+    """QToolButton whose icon can be smoothly rotated via QPropertyAnimation.
+
+    The base icon is provided once via setIconBase(); the iconRotation
+    property is animated, and the displayed icon is re-rendered every
+    step so we never need a QGraphicsView just to spin an icon.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._icon_rotation = 180.0
+        self._icon_base: QPixmap | None = None
+
+    def setIconBase(self, pixmap: QPixmap):
+        self._icon_base = pixmap
+        self._rebuild_icon()
+
+    def _rebuild_icon(self):
+        if self._icon_base is None:
+            return
+        if self._icon_rotation == 0:
+            rotated = self._icon_base
+        else:
+            t = QTransform()
+            t.rotate(self._icon_rotation)
+            rotated = self._icon_base.transformed(
+                t, Qt.TransformationMode.SmoothTransformation
+            )
+        self.setIcon(QIcon(rotated))
+
+    def getIconRotation(self) -> float:
+        return self._icon_rotation
+
+    def setIconRotation(self, value: float):
+        self._icon_rotation = float(value)
+        self._rebuild_icon()
+
+    # QPropertyAnimation needs a real Qt property on the QObject to bind to
+    iconRotation = Property(float, getIconRotation, setIconRotation)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, keyword, page_size=10):
         super().__init__()
@@ -255,6 +313,8 @@ class MainWindow(QMainWindow):
         # 不满意信号:用户主动表达"这些都不行",Agent 应当换关键词或重做搜索,
         # 而不是静默取消 / 随机选一个。
         self._dissatisfied = False
+        # chevron 旋转动画:首次 toggle 时懒构造
+        self._chevron_anim = None
 
         # 分页状态
         self.page_size = max(1, page_size)
@@ -297,17 +357,52 @@ class MainWindow(QMainWindow):
             }}
             QPushButton:hover {{ background: {ACCENT_HOVER}; }}
             QPushButton:disabled {{ background: {BG_DISABLED}; color: {TEXT_DISABLED}; }}
+            /* split button 左半:左侧圆角,右侧直角,和 chevron 拼成一体 */
+            QPushButton#confirmBtn {{
+                background: {ACCENT};
+                color: white;
+                border: none;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0;
+                border-bottom-right-radius: 0;
+                padding: 8px 20px;
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            QPushButton#confirmBtn:hover {{ background: {ACCENT_HOVER}; }}
+            QPushButton#confirmBtn:disabled {{ background: {BG_DISABLED}; color: {TEXT_DISABLED}; }}
+            /* split button 右半(chevron):左侧直角,右侧圆角,中间一道细分隔 */
             QToolButton#moreBtn {{
                 background: {ACCENT};
                 color: white;
                 border: none;
-                border-radius: 6px;
+                border-top-left-radius: 0;
+                border-bottom-left-radius: 0;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                border-left: 1px solid rgba(255, 255, 255, 0.28);
                 padding: 0;
-                font-size: 14px;
-                font-weight: 700;
+                qproperty-iconSize: 18px;
             }}
             QToolButton#moreBtn:hover {{ background: {ACCENT_HOVER}; }}
-            QToolButton#moreBtn::menu-indicator {{ image: none; }}
+            /* 下拉面板:和 cluster 同宽同高同色,看起来就是 cluster 往下延伸一块 */
+            QFrame#morePopup {{
+                background: {ACCENT};
+                border: none;
+                border-radius: 6px;
+            }}
+            QPushButton#dissatisfiedBtn {{
+                background: {ACCENT};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 20px;
+                font-size: 13px;
+                font-weight: 600;
+                text-align: center;
+            }}
+            QPushButton#dissatisfiedBtn:hover {{ background: {ACCENT_HOVER}; }}
             QPushButton#pageBtn {{
                 background: {BG_CARD};
                 color: {TEXT_PRIMARY};
@@ -379,29 +474,60 @@ class MainWindow(QMainWindow):
         hlayout.addWidget(self.next_btn)
 
         self.confirm_btn = QPushButton("Confirm")
-        self.confirm_btn.setFixedWidth(120)
+        self.confirm_btn.setObjectName("confirmBtn")
+        self.confirm_btn.setFixedHeight(36)
+        self.confirm_btn.setMinimumWidth(120)
         self.confirm_btn.setEnabled(False)
         self.confirm_btn.clicked.connect(self._confirm)
-        hlayout.addWidget(self.confirm_btn)
 
-        # Confirm 右侧的 chevron —— 展开"用户主动反馈"菜单。
-        # 至少要支持"不满意"这种语义,Agent 拿到信号后才能换关键词,
-        # 而不是被 cancel / confirm 二元语义逼到硬猜。
-        self.more_btn = QToolButton()
-        self.more_btn.setText("▾")
+        # Confirm 右侧的 chevron —— 视觉上跟 Confirm 是一个 split button。
+        # 点击展开一个 accent 色面板,直接挂在 chevron 正下方,
+        # 而不是用 QMenu(系统原生菜单的样式不可控,会"偏出去")。
+        # 图标用 svg-picker 挑的 CHEVRON_SVG,渲染时染成白色跟文字一致。
+        # 默认旋转 180° 让"朝上"的 svg 看着朝下 —— 这是 dropdown 默认 UX;
+        # 展开/收起时由 _animate_chevron 在 0 ↔ 180 之间 lerp。
+        self.more_btn = RotatableToolButton()
         self.more_btn.setObjectName("moreBtn")
-        self.more_btn.setFixedSize(28, 32)
+        self.more_btn.setFixedSize(36, 36)
         self.more_btn.setToolTip("More actions")
-        # InstantPopup:按下立即展开菜单,不进入 checked 状态
-        self.more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        more_menu = QMenu(self.more_btn)
-        act_dissatisfied = more_menu.addAction("不满意")
-        act_dissatisfied.setToolTip(
-            "当前关键词下没有任何合适的图标 —— Agent 应换关键词或换思路"
+        # 没有 setMenu —— DelayedPopup 在无菜单时直接落到 clicked 信号,
+        # 所以默认 popup mode 不影响 click 路由
+        chevron_pm = svg_bytes_to_pixmap(CHEVRON_SVG, size=64, color="white")
+        self.more_btn.setIconBase(chevron_pm)
+        self.more_btn.setIconSize(QSize(18, 18))
+        self.more_btn.setIconRotation(180)
+        self.more_btn.clicked.connect(self._toggle_more_popup)
+
+        # 0 间距子布局:Confirm 和 chevron 紧贴在一起,用 CSS 圆角拼成一体
+        cluster = QHBoxLayout()
+        cluster.setSpacing(0)
+        cluster.setContentsMargins(0, 0, 0, 0)
+        cluster.addWidget(self.confirm_btn)
+        cluster.addWidget(self.more_btn)
+        hlayout.addLayout(cluster)
+
+        # 下拉面板 —— 当前只放"不满意"一个动作。
+        # 用 child QFrame 而不是 Qt.Popup,因为:
+        # 1) 样式完全自己控制(accent 色面板)
+        # 2) 位置完全自己控制(紧贴 chevron 正下方,不会因 OS 风格"偏出去")
+        self.more_popup = QFrame(self)
+        self.more_popup.setObjectName("morePopup")
+        self.more_popup.hide()
+        popup_layout = QVBoxLayout(self.more_popup)
+        popup_layout.setSpacing(0)
+        popup_layout.setContentsMargins(0, 0, 0, 0)
+        self.dissatisfied_btn = QPushButton("Reject all")
+        self.dissatisfied_btn.setObjectName("dissatisfiedBtn")
+        self.dissatisfied_btn.setFixedHeight(36)
+        self.dissatisfied_btn.setToolTip(
+            "None of these icons fit —— the agent should re-search with "
+            "different keywords instead of guessing"
         )
-        act_dissatisfied.triggered.connect(self._signal_dissatisfied)
-        self.more_btn.setMenu(more_menu)
-        hlayout.addWidget(self.more_btn)
+        self.dissatisfied_btn.clicked.connect(self._signal_dissatisfied)
+        popup_layout.addWidget(self.dissatisfied_btn)
+
+        # 全局事件过滤:popup 开着时,鼠标点外面就把 popup 关掉
+        QApplication.instance().installEventFilter(self)
         root.addWidget(header)
 
         self.progress = QProgressBar()
@@ -549,6 +675,73 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Error: {self._pending_error}")
         self.prev_btn.setEnabled(self.current_page > 0)
 
+    def _show_popup(self):
+        """定位 + 显示 + 把 chevron 旋转到 0°(apex 朝上,表示"已展开")。"""
+        popup_w = self.confirm_btn.width() + self.more_btn.width()
+        popup_h = self.dissatisfied_btn.height()
+        # 用 mapTo 把 chevron 的几何映射到 self(MainWindow)坐标系
+        anchor = self.more_btn.mapTo(self, QPoint(0, self.more_btn.height()))
+        x = anchor.x() + self.more_btn.width() - popup_w  # 右对齐 chevron 右边缘
+        y = anchor.y()  # 紧贴 cluster,无空隙
+        self.more_popup.setFixedSize(popup_w, popup_h)
+        self.more_popup.move(x, y)
+        self.more_popup.show()
+        self.more_popup.raise_()
+        self._animate_chevron(0)
+
+    def _hide_popup(self):
+        """隐藏 + 把 chevron 转回 180°(apex 朝下,表示"未展开")。"""
+        if self.more_popup.isVisible():
+            self.more_popup.hide()
+        self._animate_chevron(180)
+
+    def _toggle_more_popup(self):
+        if self.more_popup.isVisible():
+            self._hide_popup()
+        else:
+            self._show_popup()
+
+    def _animate_chevron(self, target: float, duration_ms: int = 180):
+        """用 QPropertyAnimation 在 chevron 当前角度和 target 之间 lerp。
+        InOutQuad 让起步/收尾更柔和。重复触发会停掉旧的、再启新的。
+
+        注意 stop() 会把当前值重置成上次的 startValue —— 所以先捕获 current,
+        再 setStartValue/setEndValue,最后才 stop+start,避免动画起点被吃掉。
+        """
+        if self._chevron_anim is None:
+            self._chevron_anim = QPropertyAnimation(self.more_btn, b"iconRotation")
+            self._chevron_anim.setDuration(duration_ms)
+            self._chevron_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        current = self.more_btn.getIconRotation()
+        self._chevron_anim.setStartValue(current)
+        self._chevron_anim.setEndValue(target)
+        self._chevron_anim.stop()  # reset 到刚 set 的 startValue (== current)
+        self._chevron_anim.start()
+
+    def eventFilter(self, obj, event):
+        """popup 开着时,popup 之外的鼠标按下都把 popup 关掉。
+        但 chevron 自己点的话别在这里关 —— 它的 clicked 信号会 toggle,
+        不然会出现 filter 关一次 + clicked 又开一次,动画来回跑吃一半的 bug。
+
+        用全局坐标判断而不是 obj is more_btn:PySide6 的 obj 身份比较偶尔不稳,
+        几何对比更稳。
+        """
+        if self.more_popup.isVisible() and event.type() == QEvent.Type.MouseButtonPress:
+            try:
+                gp = event.globalPosition().toPoint()
+            except AttributeError:
+                gp = QCursor.pos()
+            chevron_tl = self.more_btn.mapToGlobal(QPoint(0, 0))
+            chevron_rect = QRect(chevron_tl, self.more_btn.size())
+            if chevron_rect.contains(gp):
+                # 点在 chevron 上,留给 clicked 处理 toggle
+                return super().eventFilter(obj, event)
+            popup_tl = self.more_popup.mapToGlobal(QPoint(0, 0))
+            popup_rect = QRect(popup_tl, self.more_popup.size())
+            if not popup_rect.contains(gp):
+                self._hide_popup()
+        return super().eventFilter(obj, event)
+
     def _on_card_click(self, iconify_id, selected):
         if selected:
             self.selected.add(iconify_id)
@@ -579,6 +772,7 @@ class MainWindow(QMainWindow):
         # 先置位:quit() 会顺带触发 closeEvent,要在那之前标记成 confirmed,
         # 否则 closeEvent 会把 cancel 行也写到 stderr。
         self._confirmed = True
+        self.more_popup.hide()  # 直接 hide,避免动画在 quit() 中途跑
 
         for iconify_id in self.selected:
             svg_bytes = None
@@ -603,6 +797,7 @@ class MainWindow(QMainWindow):
         和 Confirm 路径一样,closeEvent 会顺带触发,所以要先置 _dissatisfied。
         """
         self._dissatisfied = True
+        self.more_popup.hide()  # 同上,quit() 路径不开动画
 
         if self.selected:
             names = ", ".join(sorted(self.selected))
