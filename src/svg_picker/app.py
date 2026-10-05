@@ -4,6 +4,7 @@
 网络/渲染职责已迁出到 svg_picker.iconify;主题已迁出到 svg_picker.themes。
 """
 
+import json
 import sys
 import threading
 
@@ -162,8 +163,19 @@ class RotatableToolButton(QToolButton):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, keywords, page_size=10, theme: Theme | None = None):
+    def __init__(
+        self,
+        keywords,
+        page_size=10,
+        theme: Theme | None = None,
+        context: str = "",
+        next_action: str = "",
+        output_format: str = "svg",
+    ):
         super().__init__()
+        self.context = context.strip()
+        self.next_action = next_action.strip()
+        self.output_format = output_format
         if theme is None:
             theme = get_theme(DEFAULT_THEME)
         self.theme = theme
@@ -911,7 +923,8 @@ class MainWindow(QMainWindow):
         self._confirmed = True
         self.more_popup.hide()  # 直接 hide,避免动画在 quit() 中途跑
 
-        for iconify_id in self.selected:
+        selections = []
+        for iconify_id in sorted(self.selected):
             svg_bytes = None
             # 在所有缓存页里找
             for page_results in self._cache.values():
@@ -921,10 +934,29 @@ class MainWindow(QMainWindow):
             # 兜底:重新下载
             if not svg_bytes:
                 svg_bytes = fetch_svg_bytes(iconify_id)
-            if svg_bytes:
+            if not svg_bytes:
+                continue
+
+            svg_text = svg_bytes.decode("utf-8", errors="replace")
+            selections.append({
+                "id": iconify_id,
+                "svg": svg_text,
+            })
+
+            if self.output_format == "svg":
                 print(f"<!-- {iconify_id} -->")
-                print(svg_bytes.decode("utf-8", errors="replace"))
+                print(svg_text)
                 print()
+
+        if self.output_format == "json":
+            print(json.dumps({
+                "event": "svg_picker.completed",
+                "status": "completed",
+                "context": self.context,
+                "next_action": self.next_action,
+                "keyword": self._current_keyword(),
+                "selections": selections,
+            }, ensure_ascii=False))
 
         QApplication.instance().quit()
 

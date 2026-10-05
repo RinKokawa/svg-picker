@@ -222,3 +222,35 @@ Both share the same core principle: **human judgment improves AI output**.
 ## License
 
 MIT
+
+
+## Agent / human-picker integration
+
+For agent workflows, `svg-picker` can emit a structured result instead of raw SVG output:
+
+```bash
+svg-picker calendar clock \
+  --context "Choose an icon for the history timeline event card" \
+  --next-action "Use the selected icon in EventCard.vue" \
+  --output-format json
+```
+
+Example stdout:
+
+```json
+{
+  "event": "svg_picker.completed",
+  "status": "completed",
+  "context": "Choose an icon for the history timeline event card",
+  "next_action": "Use the selected icon in EventCard.vue",
+  "keyword": "calendar",
+  "selections": [
+    {
+      "id": "mdi:calendar",
+      "svg": "<svg>...</svg>"
+    }
+  ]
+}
+```
+
+The default output format remains `svg` for backwards compatibility.
