@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from svg_picker.iconify import fetch_svg_bytes, search_icons, svg_bytes_to_pixmap
-from svg_picker.themes import DEFAULT_THEME, Theme, get_theme
+from svg_picker.themes import DEFAULT_THEME, Theme, get_theme, next_theme_name
 
 
 # chevron 按钮的 SVG 图标 —— 自己用 svg-picker 选的 (iconmind:chevron-up-duotone-bold)。
@@ -78,6 +78,16 @@ class IconCard(QFrame):
             self._update_style()
             self._on_click(self.iconify_id, self._selected)
         super().mousePressEvent(event)
+
+    def set_theme(self, theme, pixmap) -> None:
+        """主题切换时同步:换 theme + 换 pixmap,并触发重绘。
+
+        外部 (MainWindow.set_theme) 负责按新主题色重渲 pixmap 后传进来。
+        """
+        self.theme = theme
+        self._pixmap = pixmap
+        self._update_style()
+        self.update()  # 触发 paintEvent,新 pixmap 才会被画上去
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -202,6 +212,11 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(f"""
             QMainWindow, QWidget, QScrollArea, QScrollArea > QWidget {{ background: {t.bg_base}; }}
             QLabel {{ color: {t.text_primary}; background: transparent; }}
+            /* header 区:由 objectName 控制颜色,切主题时自动跟着变 */
+            QFrame#header {{ background: {t.bg_base}; border-bottom: 1px solid {t.border}; }}
+            QLabel#searchLabel {{ font-size: 16px; font-weight: 600; color: {t.text_primary}; }}
+            QLabel#countLabel, QLabel#pageLabel {{ color: {t.text_muted}; font-size: 13px; }}
+            QLabel#statusLabel {{ color: {t.text_muted}; font-size: 12px; padding: 4px 16px; background: {t.bg_base}; }}
             QPushButton {{
                 background: {t.accent};
                 color: white;
@@ -272,6 +287,16 @@ class MainWindow(QMainWindow):
             QPushButton#pageBtn:disabled {{
                 background: {t.bg_base}; color: {t.text_disabled}; border-color: {t.bg_disabled};
             }}
+            /* 主题切换按钮:跟 pageBtn 尺寸一致,里面放 emoji */
+            QPushButton#themeBtn {{
+                background: {t.bg_card};
+                color: {t.text_primary};
+                border: 1px solid {t.border};
+                border-radius: 6px;
+                padding: 0;
+                font-size: 16px;
+            }}
+            QPushButton#themeBtn:hover {{ background: {t.bg_hover}; border-color: {t.border_hover}; }}
             QScrollBar:vertical {{ background: {t.bg_base}; width: 8px; border-radius: 4px; }}
             QScrollBar::handle:vertical {{ background: {t.border}; border-radius: 4px; min-height: 40px; }}
             QScrollBar::handle:hover {{ background: {t.border_hover}; }}
@@ -291,21 +316,31 @@ class MainWindow(QMainWindow):
 
         t = self.theme
         header = QFrame()
+        header.setObjectName("header")
         header.setFixedHeight(58)
-        header.setStyleSheet(f"QFrame {{ background: {t.bg_base}; border-bottom: 1px solid {t.border}; }}")
         hlayout = QHBoxLayout(header)
         hlayout.setContentsMargins(20, 0, 20, 0)
         hlayout.setSpacing(12)
 
         lbl = QLabel(f"Search: {self.keyword}")
-        lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {t.text_primary};")
+        lbl.setObjectName("searchLabel")
         hlayout.addWidget(lbl)
 
         self.count_label = QLabel("0 selected")
-        self.count_label.setStyleSheet(f"color: {t.text_muted}; font-size: 13px;")
+        self.count_label.setObjectName("countLabel")
         hlayout.addWidget(self.count_label)
 
         hlayout.addStretch()
+
+        # 主题切换按钮 —— 一个就够,点击按顺序切。无 popup / 下拉。
+        # 尺寸跟翻页按钮一致(32x32),里面用 emoji 🎨 表示"换皮"。
+        # 当前主题不再写在按钮上 —— 看窗口颜色就知道了。
+        self.theme_btn = QPushButton("\U0001F3A8")  # 🎨 artist palette
+        self.theme_btn.setObjectName("themeBtn")
+        self.theme_btn.setFixedSize(32, 32)
+        self.theme_btn.setToolTip("Switch theme (click to cycle)")
+        self.theme_btn.clicked.connect(self._cycle_theme)
+        hlayout.addWidget(self.theme_btn)
 
         # 翻页控件
         self.prev_btn = QPushButton("‹")
@@ -317,7 +352,7 @@ class MainWindow(QMainWindow):
         hlayout.addWidget(self.prev_btn)
 
         self.page_label = QLabel("— / —")
-        self.page_label.setStyleSheet(f"color: {t.text_muted}; font-size: 13px;")
+        self.page_label.setObjectName("pageLabel")
         self.page_label.setFixedWidth(60)
         self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hlayout.addWidget(self.page_label)
@@ -405,9 +440,7 @@ class MainWindow(QMainWindow):
         root.addWidget(scroll)
 
         self.status_label = QLabel("Searching...")
-        self.status_label.setStyleSheet(
-            f"color: {t.text_muted}; font-size: 12px; padding: 4px 16px; background: {t.bg_base};"
-        )
+        self.status_label.setObjectName("statusLabel")
         self.status_label.setFixedHeight(28)
         root.addWidget(self.status_label)
 
@@ -563,6 +596,36 @@ class MainWindow(QMainWindow):
         self._chevron_anim.setEndValue(target)
         self._chevron_anim.stop()  # reset 到刚 set 的 startValue (== current)
         self._chevron_anim.start()
+
+    def set_theme(self, theme: Theme) -> None:
+        """运行时切换主题 —— 重生 QSS、按新主题色重渲每个 card 的 SVG pixmap。
+
+        不会改变任何选中 / 分页状态,只是换皮。
+        当前主题不再写在按钮上(emoji 不变),但窗口颜色和图标颜色已经跟着切了。
+        """
+        self.theme = theme
+        self._apply_theme()
+        # 每个已渲染的 card:用缓存里的 svg bytes 重新染成新主题色
+        for iconify_id, card in self.icon_cards.items():
+            svg_bytes = self._lookup_svg_bytes(iconify_id)
+            if svg_bytes:
+                new_pm = svg_bytes_to_pixmap(svg_bytes, 64, theme.text_primary)
+                card.set_theme(theme, new_pm)
+            else:
+                # 没找到 bytes(理论上不会发生,兜底:只换样式不换 pixmap)
+                card.theme = theme
+                card._update_style()
+
+    def _lookup_svg_bytes(self, iconify_id: str):
+        """在所有缓存页里找 svg bytes,找不到返回 None。"""
+        for page_results in self._cache.values():
+            if iconify_id in page_results:
+                return page_results[iconify_id]
+        return None
+
+    def _cycle_theme(self) -> None:
+        """按 THEME_CYCLE 顺序切到下一个主题。"""
+        self.set_theme(get_theme(next_theme_name(self.theme.name)))
 
     def eventFilter(self, obj, event):
         """popup 开着时,popup 之外的鼠标按下都把 popup 关掉。

@@ -82,6 +82,18 @@ THEMES: dict[str, Theme] = {
 DEFAULT_THEME = "cream"
 
 
+# 单击 cycle 按钮时按此顺序切。浅 → 深,正向"切换"是变暗,反向是变亮。
+THEME_CYCLE: tuple[str, ...] = ("cream", "sky", "dark")
+
+
+def next_theme_name(current: str) -> str:
+    """cycle 当前名在 THEME_CYCLE 里往后一格,末尾绕回首。"""
+    if current not in THEME_CYCLE:
+        return THEME_CYCLE[0]
+    idx = THEME_CYCLE.index(current)
+    return THEME_CYCLE[(idx + 1) % len(THEME_CYCLE)]
+
+
 def get_theme(name: str) -> Theme:
     """按名取 Theme;未知名抛 ValueError 让 CLI 给出友好提示。"""
     if name not in THEMES:
