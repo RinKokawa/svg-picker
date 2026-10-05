@@ -45,7 +45,7 @@ dev = [
 ]
 
 [project.scripts]
-svg-picker = "svg_picker.app:main"
+svg-picker = "svg_picker.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/RinKokawa/svg-picker"
