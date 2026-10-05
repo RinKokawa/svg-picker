@@ -217,3 +217,35 @@ else:
 ## 开源协议
 
 MIT
+
+
+## Agent / human-picker 集成
+
+用于 Agent 工作流时，`svg-picker` 可以输出结构化结果，而不是仅输出原始 SVG：
+
+```bash
+svg-picker calendar clock \
+  --context "为历史时间轴事件卡片选择图标" \
+  --next-action "将选中的图标用于 EventCard.vue" \
+  --output-format json
+```
+
+示例 stdout：
+
+```json
+{
+  "event": "svg_picker.completed",
+  "status": "completed",
+  "context": "为历史时间轴事件卡片选择图标",
+  "next_action": "将选中的图标用于 EventCard.vue",
+  "keyword": "calendar",
+  "selections": [
+    {
+      "id": "mdi:calendar",
+      "svg": "<svg>...</svg>"
+    }
+  ]
+}
+```
+
+默认输出格式仍为 `svg`，因此不会破坏现有调用方式。
